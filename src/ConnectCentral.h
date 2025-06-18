@@ -19,8 +19,9 @@ private:
 public:
     UDPClient();
     
-    bool ConnectToServer(const string hostname, int port);
-    
+    bool connectToServer(const string hostname, int port);
+    bool sendMessage();
+    bool disconect();
 };
 
 #endif

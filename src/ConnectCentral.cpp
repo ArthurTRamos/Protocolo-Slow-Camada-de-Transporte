@@ -1,10 +1,9 @@
 #include "ConnectCentral.h"
-
 using namespace std;
 
 UDPClient::UDPClient() : sockfd(-1), connected(false) {}
 
-bool UDPClient::ConnectToServer(const string hostname, int port) {
+bool UDPClient::connectToServer(const string hostname, int port) {
     // Criar socket UDP
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0)
