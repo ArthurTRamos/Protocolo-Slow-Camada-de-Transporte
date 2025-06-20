@@ -21,15 +21,15 @@ private:
 public:
     SlowPack();
 
-    void setSid();
-    void setSttl();
-    void setFlags();
-    void setSeqnum();
-    void setAcknum();
-    void setWindow();
-    void setFid();
-    void setFo();
-    void setData();
+    bool setSid(bitset<128> sid);
+    bool setSttl(bitset<27> newSttl);
+    bool setFlags(bitset<5> newFlags);
+    bool setSeqnum(bitset<32> newSeqnum);
+    bool setAcknum(bitset<32> newAcknum);
+    bool setWindow(bitset<16> newWindow);
+    bool setFid(bitset<8> newFid);
+    bool setFo(bitset<8> newFo);
+    bool setData(vector<uint8_t> newData);
 
     vector<uint8_t> getSlow();
 };
