@@ -24,3 +24,6 @@ clean:
 
 # Recompila tudo do zero
 rebuild: clean all
+
+run: $(TARGET)
+	./$(TARGET)
