@@ -16,11 +16,12 @@ private:
 public:
     UUIDPack();
 
-    void setCustomA();
-    void setCustomB();
-    void setCustomC();
-    void setVar();
-    void setVer();
+    void setCustomA(bitset<48> newCustom_a, bool random);
+    void setCustomB(bitset<12> newCustom_b, bool random);
+    void setCustomC(bitset<62> newCustom_c, bool random);
+    void setVar(bitset<2> newVar, bool random);
+    void setVer(bitset<4> newVer, bool random);
+    void setAllBy16Bytes(uint8_t sid[16]);
 
     bitset<128> getUUID();
 };

@@ -17,7 +17,7 @@ using namespace std;
 
 constexpr int SLOW_PORT = 7033;
 constexpr size_t BUFFER_SIZE = 1472;
-constexpr int NUM_PACOTES = 3;
+constexpr int NUM_PACOTES = 1;
 constexpr int ACK_TIMEOUT_MS = 1000;
 
 UUIDPack session_id;
@@ -43,6 +43,7 @@ string bits_from_bytes(const vector<uint8_t>& data, size_t bit_offset, size_t bi
     }
     return result;
 }
+
 
 void print_packet_precise_bits(const vector<uint8_t>& data, const string& direction) {
     cout << "[" << direction << "] " << data.size() << " bytes\n";
@@ -78,6 +79,7 @@ void print_packet_precise_bits(const vector<uint8_t>& data, const string& direct
         cout << "data:   " << bits_from_bytes(data, bit_offset, total_bits - bit_offset) << "\n";
     }
 }
+
 
 // Função para extrair campos do pacote recebido (little endian)
 void parse_received_packet(const uint8_t* buffer, size_t len) {
@@ -130,6 +132,7 @@ void parse_received_packet(const uint8_t* buffer, size_t len) {
          << " | Win: " << window << endl;
 }
 
+
 // Função para criar flags como bitset<5>
 bitset<5> createFlags(bool connect, bool accept, bool ack, bool failed, bool revive) {
     bitset<5> flags;
@@ -141,9 +144,10 @@ bitset<5> createFlags(bool connect, bool accept, bool ack, bool failed, bool rev
     return flags;
 }
 
+
 void send_connect() {
-    //bitset<128> uuid_para_debug = UUIDPack().getUUID();
     bitset<128> uuid_para_debug(0);
+
     SlowPack pkt;
     pkt.setSid(uuid_para_debug);
     pkt.setFlags(createFlags(true, false, false, false, false));
@@ -155,16 +159,12 @@ void send_connect() {
     pkt.setFo(bitset<8>(0));
     pkt.setData(vector<uint8_t>());
 
-    bitset<16> teste = bitset<16>(session_window);
-    cout << "\n";
-    for(int i = 0; i < 15; i++){
-        cout << teste[i];
-    }
-    cout << "\n";
-
     vector<uint8_t> packet_data = pkt.getSlow(true);
+
     cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window << endl;
     print_packet_precise_bits(packet_data, "OUT");
+
+    cout << endl << endl;
     
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 }
@@ -187,8 +187,8 @@ void send_data_loop(int num_pacotes) {
                 pkt.setSid(session_id.getUUID());
                 pkt.setFlags(createFlags(false, false, true, false, false));
                 pkt.setSttl(bitset<27>(session_sttl));
-                pkt.setSeqnum(bitset<32>(session_seq));
-                pkt.setAcknum(bitset<32>(session_ack));
+                pkt.setSeqnum(bitset<32>(1));
+                pkt.setAcknum(bitset<32>(session_seq));
                 pkt.setWindow(bitset<16>(session_window));
                 pkt.setFid(bitset<8>(0));
                 pkt.setFo(bitset<8>(0));
@@ -199,8 +199,12 @@ void send_data_loop(int num_pacotes) {
             }
 
             vector<uint8_t> packet_data = pkt.getSlow(false);
+
+            print_packet_precise_bits(packet_data, "OUT");
+
+            
             cout << "[SEND] DATA #" << (i + 1) << " (try " << tentativas 
-                 << ") | Seq: " << session_seq << " | Ack: " << session_ack << endl;
+                 << ") | Seq: " << session_seq << " | Ack: " << session_ack << " | Tamanho: " << packet_data.size() << endl;
             //print_packet_hex(packet_data, "OUT");
             
             sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
@@ -268,6 +272,7 @@ void send_data_loop(int num_pacotes) {
     }
 }
 
+
 void receive_loop() {
     char buffer[BUFFER_SIZE];
     socklen_t addr_len = sizeof(central_addr);
@@ -282,16 +287,47 @@ void receive_loop() {
 
         vector<uint8_t> received_data(buffer, buffer + len);
 
-        for (int i = 0; i < len; ++i) {
+        for (int i = 0; i < len; ++i)
             printf("%02X ", static_cast<uint8_t>(buffer[i]));
-        }
         printf("\n");
 
         //print_packet_hex(received_data, "IN");
         parse_received_packet((uint8_t*)buffer, len);
 
         if (len >= 32) {
-            uint8_t flags = buffer[16];
+            // Extrair SID (128 primeiros bits = 16 bytes)
+            uint8_t sid[16];
+            memcpy(&sid, buffer, 16);
+            
+            // Extrair flags (5 bits)
+            uint8_t flags_byte = buffer[16];
+            uint8_t flags = flags_byte & 0x1F; // Máscara para pegar apenas os 5 bits menos significativos
+            
+            // Extrair STTL (27 bits) - spans across multiple bytes
+            uint32_t sttl = 0;
+            // Os 3 bits mais significativos do flags_byte (bits 5, 6, 7) são parte do STTL
+            uint8_t sttl_part1 = (flags_byte >> 5) & 0x07; // 3 bits
+            // Os próximos 24 bits (3 bytes completos) completam o STTL
+            uint32_t sttl_part2 = 0;
+            memcpy(&sttl_part2, buffer + 17, 3); // 3 bytes
+            sttl_part2 = le32toh(sttl_part2) & 0x00FFFFFF; // Garantir apenas 24 bits
+            
+            // Combinar as partes do STTL (3 bits + 24 bits = 27 bits)
+            sttl = (sttl_part1 << 24) | sttl_part2;
+            
+            // Extrair outros campos
+            uint32_t seqnum, acknum;
+            uint16_t window;
+            
+            memcpy(&seqnum, buffer + 20, 4);
+            memcpy(&acknum, buffer + 24, 4);
+            memcpy(&window, buffer + 28, 2);
+            
+            // Converter de little endian para host byte order
+            seqnum = le32toh(seqnum);
+            acknum = le32toh(acknum);
+            window = le16toh(window);
+            /*uint8_t flags = buffer[16];
             uint32_t seqnum, acknum;
             uint16_t window;
             
@@ -301,21 +337,27 @@ void receive_loop() {
             
             seqnum = le32toh(seqnum);
             acknum = le32toh(acknum);
-            window = le16toh(window);
+            window = le16toh(window);*/
             
             bitset<5> recv_flags(flags);
             bool is_accept = recv_flags[1];
             bool is_ack = recv_flags[2];
             bool is_failed = recv_flags[3];
             bool is_revive = recv_flags[4];
+
+            // Captando dados do SID
+            UUIDPack uuidAux;
+            uuidAux.setAllBy16Bytes(sid);
             
             if (is_accept && !session_established) {
                 lock_guard<mutex> lock(session_mutex);
+                session_id = uuidAux;
+                session_sttl = sttl;
                 session_seq = seqnum;
                 session_ack = acknum;
                 session_window = window;
                 session_established = true;
-                cout << "[CONN] Sessão estabelecida!" << endl;
+                cout << "[CONN] Sessão estabelecida!" << endl << endl;
             }
             else if (is_ack && session_established) {
                 lock_guard<mutex> lock(session_mutex);
