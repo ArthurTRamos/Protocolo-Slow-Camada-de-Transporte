@@ -31,7 +31,7 @@ public:
     bool setFo(bitset<8> newFo);
     bool setData(vector<uint8_t> newData);
 
-    vector<uint8_t> getSlow();
+    vector<uint8_t> getSlow(bool nullData);
 };
 
 #endif

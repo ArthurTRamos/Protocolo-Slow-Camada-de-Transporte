@@ -83,21 +83,48 @@ void print_packet_precise_bits(const vector<uint8_t>& data, const string& direct
 void parse_received_packet(const uint8_t* buffer, size_t len) {
     if (len < 32) return;
     
-    // Extrair campos considerando little endian
-    uint8_t flags = buffer[16];
+    // Extrair SID (128 primeiros bits = 16 bytes)
+    uint8_t sid[16];
+    memcpy(sid, buffer, 16);
+    
+    // Extrair flags (5 bits)
+    uint8_t flags_byte = buffer[16];
+    uint8_t flags = flags_byte & 0x1F; // Máscara para pegar apenas os 5 bits menos significativos
+    
+    // Extrair STTL (27 bits) - spans across multiple bytes
+    uint32_t sttl = 0;
+    // Os 3 bits mais significativos do flags_byte (bits 5, 6, 7) são parte do STTL
+    uint8_t sttl_part1 = (flags_byte >> 5) & 0x07; // 3 bits
+    // Os próximos 24 bits (3 bytes completos) completam o STTL
+    uint32_t sttl_part2 = 0;
+    memcpy(&sttl_part2, buffer + 17, 3); // 3 bytes
+    sttl_part2 = le32toh(sttl_part2) & 0x00FFFFFF; // Garantir apenas 24 bits
+    
+    // Combinar as partes do STTL (3 bits + 24 bits = 27 bits)
+    sttl = (sttl_part1 << 24) | sttl_part2;
+    
+    // Extrair outros campos
     uint32_t seqnum, acknum;
     uint16_t window;
     
-    memcpy(&seqnum, buffer + 17, 4);
-    memcpy(&acknum, buffer + 21, 4);
-    memcpy(&window, buffer + 25, 2);
+    memcpy(&seqnum, buffer + 20, 4);
+    memcpy(&acknum, buffer + 24, 4);
+    memcpy(&window, buffer + 28, 2);
     
     // Converter de little endian para host byte order
     seqnum = le32toh(seqnum);
     acknum = le32toh(acknum);
     window = le16toh(window);
     
+    // Imprimir SID em hexadecimal
+    cout << "[RECV] SID: ";
+    for (int i = 0; i < 16; i++) {
+        cout << hex << setw(2) << setfill('0') << static_cast<int>(sid[i]);
+    }
+    cout << endl;
+    
     cout << "[RECV] Flags: " << bitset<5>(flags) 
+         << " | STTL: " << dec << sttl
          << " | Seq: " << seqnum 
          << " | Ack: " << acknum 
          << " | Win: " << window << endl;
@@ -115,11 +142,12 @@ bitset<5> createFlags(bool connect, bool accept, bool ack, bool failed, bool rev
 }
 
 void send_connect() {
-    bitset<128> uuid_para_debug = UUIDPack().getUUID();
+    //bitset<128> uuid_para_debug = UUIDPack().getUUID();
+    bitset<128> uuid_para_debug(0);
     SlowPack pkt;
     pkt.setSid(uuid_para_debug);
     pkt.setFlags(createFlags(true, false, false, false, false));
-    pkt.setSttl(bitset<27>(1024));
+    pkt.setSttl(bitset<27>(0));
     pkt.setSeqnum(bitset<32>(0));
     pkt.setAcknum(bitset<32>(0));
     pkt.setWindow(bitset<16>(session_window));
@@ -134,7 +162,7 @@ void send_connect() {
     }
     cout << "\n";
 
-    vector<uint8_t> packet_data = pkt.getSlow();
+    vector<uint8_t> packet_data = pkt.getSlow(true);
     cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window << endl;
     print_packet_precise_bits(packet_data, "OUT");
     
@@ -170,7 +198,7 @@ void send_data_loop(int num_pacotes) {
                 pkt.setData(data_vec);
             }
 
-            vector<uint8_t> packet_data = pkt.getSlow();
+            vector<uint8_t> packet_data = pkt.getSlow(false);
             cout << "[SEND] DATA #" << (i + 1) << " (try " << tentativas 
                  << ") | Seq: " << session_seq << " | Ack: " << session_ack << endl;
             //print_packet_hex(packet_data, "OUT");
@@ -210,7 +238,7 @@ void send_data_loop(int num_pacotes) {
         pkt.setData(vector<uint8_t>());
     }
 
-    vector<uint8_t> packet_data = pkt.getSlow();
+    vector<uint8_t> packet_data = pkt.getSlow(false);
     cout << "[SEND] DISCONNECT | Seq: " << (session_seq - 1) << " | Flags: CONNECT+ACK+REVIVE" << endl;
     //print_packet_hex(packet_data, "OUT");
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
@@ -232,7 +260,7 @@ void send_data_loop(int num_pacotes) {
             revive_pkt.setFo(bitset<8>(0));
             revive_pkt.setData(vector<uint8_t>());
 
-            vector<uint8_t> revive_data = revive_pkt.getSlow();
+            vector<uint8_t> revive_data = revive_pkt.getSlow(false);
             cout << "[SEND] REVIVE | Seq: " << session_seq << " | STTL: " << session_sttl << endl;
             //print_packet_hex(revive_data, "OUT");
             sendto(sockfd, revive_data.data(), revive_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
@@ -249,8 +277,16 @@ void receive_loop() {
     while (true) {
         ssize_t len = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (sockaddr*)&central_addr, &addr_len);
         if (len <= 0) continue;
+        
+        cout << "Recebeu " << len << endl;
 
         vector<uint8_t> received_data(buffer, buffer + len);
+
+        for (int i = 0; i < len; ++i) {
+            printf("%02X ", static_cast<uint8_t>(buffer[i]));
+        }
+        printf("\n");
+
         //print_packet_hex(received_data, "IN");
         parse_received_packet((uint8_t*)buffer, len);
 

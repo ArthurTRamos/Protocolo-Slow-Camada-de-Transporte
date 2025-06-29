@@ -64,7 +64,7 @@ bool SlowPack::setData(vector<uint8_t> newData) {
     return true;
 }
 
-vector<uint8_t> SlowPack::getSlow() {
+vector<uint8_t> SlowPack::getSlow(bool nullData) {
     vector<bool> packet_bits;
     
     // SID (128 bits) - Little endian por grupos de 8 bits
@@ -148,10 +148,13 @@ vector<uint8_t> SlowPack::getSlow() {
         packet_bits.push_back(fo[i]);
     }
     
-    // DATA - cada byte individualmente (sem little endian entre bytes)
-    for (uint8_t byte : data) {
-        for (int i = 0; i < 8; i++) {
-            packet_bits.push_back((byte >> i) & 1);
+    // Se precisar necessariamente do campo DATA
+    if (!nullData) {
+        // DATA - cada byte individualmente (sem little endian entre bytes)
+        for (uint8_t byte : data) {
+            for (int i = 0; i < 8; i++) {
+                packet_bits.push_back((byte >> i) & 1);
+            }
         }
     }
     
