@@ -61,6 +61,80 @@ string bits_from_bytes(const vector<uint8_t>& data, size_t bit_offset, size_t bi
     return result;
 }
 
+void imprimirPacoteInterpretado(const std::vector<uint8_t>& buffer) {
+    int offset = 0;
+
+    auto readUInt = [&](int numBytes) -> uint32_t {
+        uint32_t value = 0;
+        for (int i = 0; i < numBytes; ++i) {
+            value |= (buffer[offset++] << (i * 8));
+        }
+        return value;
+    };
+
+    auto readUShort = [&]() -> uint16_t {
+        uint16_t value = 0;
+        for (int i = 0; i < 2; ++i) {
+            value |= (buffer[offset++] << (i * 8));
+        }
+        return value;
+    };
+
+    auto readUChar = [&]() -> uint8_t {
+        return buffer[offset++];
+    };
+
+    std::cout << "========= PACOTE INTERPRETADO =========\n";
+
+    // SID (16 bytes)
+    std::cout << "SID: ";
+    for (int i = 0; i < 16; ++i)
+        std::cout << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(buffer[offset++]) << " ";
+    std::cout << std::dec << std::endl;
+
+    // STTL + FLAGS (4 bytes)
+    uint32_t sttlFlags = readUInt(4);
+    uint32_t flags = sttlFlags & 0x1F;          // últimos 5 bits
+    uint32_t sttl = (sttlFlags >> 5) & 0x7FFFFFF; // 27 bits seguintes
+
+    std::cout << "FLAGS (binário): ";
+    for (int i = 4; i >= 0; --i)
+        std::cout << ((flags >> i) & 1);
+    std::cout << std::endl;
+
+    std::cout << "STTL (decimal): " << sttl << std::endl;
+
+    // SEQ (4 bytes)
+    uint32_t seq = readUInt(4);
+    std::cout << "SEQNUM: " << seq << std::endl;
+
+    // ACK (4 bytes)
+    uint32_t ack = readUInt(4);
+    std::cout << "ACKNUM: " << ack << std::endl;
+
+    // WINDOW (2 bytes)
+    uint16_t win = readUShort();
+    std::cout << "WINDOW: " << win << std::endl;
+
+    // FID (1 byte)
+    uint8_t fid = readUChar();
+    std::cout << "FID: " << static_cast<int>(fid) << std::endl;
+
+    // FO (1 byte)
+    uint8_t fo = readUChar();
+    std::cout << "FO: " << static_cast<int>(fo) << std::endl;
+
+    // DATA (resto)
+    std::cout << "DATA (ASCII): ";
+    while (offset < int(buffer.size())) {
+        char c = static_cast<char>(buffer[offset++]);
+        std::cout << (std::isprint(c) ? c : '.');
+    }
+    std::cout << std::endl;
+
+    std::cout << "========================================\n" << std::endl;
+}
+
 void imprimirBitsDoPacote(const std::vector<uint8_t>& buffer) {
     int bit_idx = 0;
     auto printBits = [&](int numBits) {
@@ -124,8 +198,9 @@ void send_connect() {
     pkt.setData(vector<uint8_t>());
 
     vector<uint8_t> packet_data = pkt.getSlow(true);
-    std::cout << "[BITS - ORDEM REAL DE ENVIO]" << std::endl;
-    imprimirBitsDoPacote(packet_data);
+    std::cout << "\n[BITS - ORDEM REAL DE ENVIO]" << std::endl;
+    //imprimirBitsDoPacote(packet_data);
+    imprimirPacoteInterpretado(packet_data);
 
     cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window.to_ulong() << endl;
 
@@ -145,6 +220,11 @@ void send_data_loop(int num_pacotes) {
         ack_received = false;
         int tentativas = 0;
 
+        {
+            lock_guard<mutex> lock(session_mutex);
+            session_seq = bitset<32>(session_seq.to_ulong() + 1);
+        }
+
         while (!ack_received && tentativas < 3) {
             tentativas++;
             SlowPack pkt;
@@ -154,7 +234,7 @@ void send_data_loop(int num_pacotes) {
                 pkt.setSid(session_sid);
                 pkt.setFlags(createFlags(false, false, true, false, false));
                 pkt.setSttl(session_sttl);
-                pkt.setSeqnum(bitset<32>(session_seq.to_ulong()+1));
+                pkt.setSeqnum(bitset<32>(session_seq));
                 pkt.setAcknum(session_ack);
                 pkt.setWindow(session_window);
                 pkt.setFid(bitset<8>(0));
@@ -166,8 +246,9 @@ void send_data_loop(int num_pacotes) {
             }
 
             vector<uint8_t> packet_data = pkt.getSlow(false);
-            std::cout << "[BITS - ORDEM REAL DE ENVIO]" << std::endl;
-            imprimirBitsDoPacote(packet_data);
+            std::cout << "\n[BITS - ORDEM REAL DE ENVIO]" << std::endl;
+            //imprimirBitsDoPacote(packet_data);
+            imprimirPacoteInterpretado(packet_data);
             
             cout << "[SEND] DATA #" << (i + 1) << " (try " << tentativas 
                  << ") | Seq: " << session_seq.to_ulong() << " | Ack: " << session_ack.to_ulong() << " | Tamanho: " << packet_data.size() << endl;
@@ -184,11 +265,6 @@ void send_data_loop(int num_pacotes) {
         if (!ack_received) {
             cout << "[ERROR] Pacote " << (i + 1) << " falhou após 3 tentativas" << endl;
             break;
-        }
-
-        {
-            lock_guard<mutex> lock(session_mutex);
-            session_seq = bitset<32>(session_seq.to_ulong() + 1);
         }
     }
 
@@ -208,8 +284,9 @@ void send_data_loop(int num_pacotes) {
     }
 
     vector<uint8_t> packet_data = pkt.getSlow(false);
-    std::cout << "[BITS - ORDEM REAL DE ENVIO]" << std::endl;
-    imprimirBitsDoPacote(packet_data);
+    std::cout << "\n[BITS - ORDEM REAL DE ENVIO]" << std::endl;
+    //imprimirBitsDoPacote(packet_data);
+    imprimirPacoteInterpretado(packet_data);
     cout << "[SEND] DISCONNECT | Seq: " << (session_seq.to_ulong() - 1) << " | Flags: CONNECT+ACK+REVIVE" << endl;
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 
@@ -231,8 +308,9 @@ void send_data_loop(int num_pacotes) {
             revive_pkt.setData(vector<uint8_t>());
 
             vector<uint8_t> revive_data = revive_pkt.getSlow(false);
-            std::cout << "[BITS - ORDEM REAL DE REVIVER]" << std::endl;
-            imprimirBitsDoPacote(revive_data);
+            std::cout << "\n[BITS - ORDEM REAL DE REVIVER]" << std::endl;
+            //imprimirBitsDoPacote(revive_data);
+            imprimirPacoteInterpretado(revive_data);
             cout << "[SEND] REVIVE | Seq: " << session_seq.to_ulong() << " | STTL: " << session_sttl.to_ulong() << endl;
             sendto(sockfd, revive_data.data(), revive_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
         }
@@ -255,8 +333,9 @@ void receive_loop() {
         cout << "Recebeu " << len << endl;
 
         vector<uint8_t> received_data(buffer, buffer + len);
-        std::cout << "[BITS - ORDEM REAL DE RECEBIMENTO]" << std::endl;
-        imprimirBitsDoPacote(received_data);
+        std::cout << "\n[BITS - ORDEM REAL DE RECEBIMENTO]" << std::endl;
+        //imprimirBitsDoPacote(received_data);
+        imprimirPacoteInterpretado(received_data);
         
         if (len >= 32) {
             // --- Construção do pacote manualmente (modo bit-a-bit) ---
@@ -274,21 +353,21 @@ void receive_loop() {
             // --- Flags (bits 0 a 4) ---
             bitset<5> flags_bits(buffer[16] & 0x1F);  // 0b00011111
 
-            // --- STTL (27 bits = 3 bits do byte[16] + bytes 17, 18, 19) ---
-            uint32_t sttl = 0;
+            bitset<27> sttl_bits;
+            int bit_idx = 0;
 
-            // Pega os bits 5,6,7 do byte[16] (mais significativos do STTL)
-            uint8_t sttl_msb3 = (buffer[16] >> 5) & 0x07; // 3 bits
+            // Bits 5,6,7 do byte[16] (STTL MSBs)
+            for (int i = 5; i <= 7; ++i, ++bit_idx) {
+                sttl_bits[bit_idx] = (buffer[16] >> i) & 1;
+            }
 
-            // Concatena com os próximos 3 bytes (24 bits)
-            uint32_t sttl_rest = 0;
-            sttl_rest |= static_cast<uint32_t>(buffer[17]) << 16;
-            sttl_rest |= static_cast<uint32_t>(buffer[18]) << 8;
-            sttl_rest |= static_cast<uint32_t>(buffer[19]);
+            // Bytes 17, 18, 19 (24 bits restantes do STTL)
+            for (int byte_i = 17; byte_i <= 19; ++byte_i) {
+                for (int i = 0; i < 8; ++i, ++bit_idx) {
+                    sttl_bits[bit_idx] = (buffer[byte_i] >> i) & 1;
+                }
+            }
 
-            // Junta tudo: 3 bits mais à esquerda + 24 bits
-            sttl = (sttl_msb3 << 24) | sttl_rest;
-            bitset<27> sttl_bits(sttl);
 
             // --- SeqNum ---
             uint32_t raw_seq;
@@ -329,6 +408,14 @@ void receive_loop() {
             vector<uint8_t> packed = p.getSlow(false);
             //print_packet_precise_bits(packed, "SLOW");
 
+/*                // Para imprimir e verificar
+            cout << "\n\n";
+            for (int i = 0; i < int(sttl_bits.size()); ++i) {
+                std::cout << sttl_bits[i] << " ";
+            }
+            cout << "\n\n";
+
+*/
             // Atualizar variáveis globais de sessão SEMPRE
             {
                 lock_guard<mutex> lock(session_mutex);
