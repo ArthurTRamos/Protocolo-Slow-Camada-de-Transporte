@@ -84,7 +84,7 @@ void imprimirPacoteInterpretado(const std::vector<uint8_t>& buffer) {
         return buffer[offset++];
     };
 
-    std::cout << "========= PACOTE INTERPRETADO =========\n";
+    std::cout << "========= PACOTE =========\n";
 
     // SID (16 bytes)
     std::cout << "SID: ";
@@ -169,7 +169,7 @@ void imprimirBitsDoPacote(const std::vector<uint8_t>& buffer) {
     if (remaining > 0)
         printBits(remaining);
 
-    std::cout << "[FIM DOS BITS] Total: " << total_bits << " bits\n" << std::endl;
+    std::cout << "[FIM DOS BITS] Total: " << total_bits << " bits\n\n" << std::endl;
 }
 
 // Função para criar flags como bitset<5>
@@ -198,16 +198,10 @@ void send_connect() {
     pkt.setData(vector<uint8_t>());
 
     vector<uint8_t> packet_data = pkt.getSlow(true);
-    std::cout << "\n[BITS - ORDEM REAL DE ENVIO]" << std::endl;
+    std::cout << "\n[ENVIANDO PEDIDO DE CONEXÃO AO SERVIDOR]" << std::endl;
     //imprimirBitsDoPacote(packet_data);
     imprimirPacoteInterpretado(packet_data);
 
-    cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window.to_ulong() << endl;
-
-    cout << endl << endl;
-
-    
-    
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 }
 
@@ -216,104 +210,102 @@ void send_data_loop(int num_pacotes) {
         this_thread::sleep_for(chrono::milliseconds(100));
     }
 
-    for (int i = 0; i < num_pacotes; ++i) {
-        ack_received = false;
-        int tentativas = 0;
+    for(int a = 0; a < 2; a++){
+        for (int i = 0; i < num_pacotes; ++i) {
+            ack_received = false;
+            int tentativas = 0;
 
-        {
-            lock_guard<mutex> lock(session_mutex);
-            session_seq = bitset<32>(session_seq.to_ulong() + 1);
-        }
-
-        while (!ack_received && tentativas < 3) {
-            tentativas++;
-            SlowPack pkt;
-            
             {
                 lock_guard<mutex> lock(session_mutex);
-                pkt.setSid(session_sid);
-                pkt.setFlags(createFlags(false, false, true, false, false));
-                pkt.setSttl(session_sttl);
-                pkt.setSeqnum(bitset<32>(session_seq));
-                pkt.setAcknum(session_ack);
-                pkt.setWindow(session_window);
-                pkt.setFid(bitset<8>(0));
-                pkt.setFo(bitset<8>(0));
-
-                string msg = "Pacote " + to_string(i + 1);
-                vector<uint8_t> data_vec(msg.begin(), msg.end());
-                pkt.setData(data_vec);
+                session_seq = bitset<32>(session_seq.to_ulong() + 1);
             }
 
-            vector<uint8_t> packet_data = pkt.getSlow(false);
-            std::cout << "\n[BITS - ORDEM REAL DE ENVIO]" << std::endl;
-            //imprimirBitsDoPacote(packet_data);
-            imprimirPacoteInterpretado(packet_data);
-            
-            cout << "[SEND] DATA #" << (i + 1) << " (try " << tentativas 
-                 << ") | Seq: " << session_seq.to_ulong() << " | Ack: " << session_ack.to_ulong() << " | Tamanho: " << packet_data.size() << endl;
-            
-            sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
+            while (!ack_received && tentativas < 3) {
+                tentativas++;
+                SlowPack pkt;
+                
+                {
+                    lock_guard<mutex> lock(session_mutex);
+                    pkt.setSid(session_sid);
+                    pkt.setFlags(createFlags(false, false, true, false, false));
+                    pkt.setSttl(session_sttl);
+                    pkt.setSeqnum(bitset<32>(session_seq));
+                    pkt.setAcknum(session_ack);
+                    pkt.setWindow(session_window);
+                    pkt.setFid(bitset<8>(0));
+                    pkt.setFo(bitset<8>(0));
 
-            int elapsed = 0;
-            while (!ack_received && elapsed < ACK_TIMEOUT_MS) {
-                this_thread::sleep_for(chrono::milliseconds(10));
-                elapsed += 10;
+                    string msg = "Pacote " + to_string((NUM_PACOTES*a)+i+1);
+                    vector<uint8_t> data_vec(msg.begin(), msg.end());
+                    pkt.setData(data_vec);
+                }
+
+                vector<uint8_t> packet_data = pkt.getSlow(false);
+                std::cout << "\n[ENVIANDO DADO " << (NUM_PACOTES*a)+i+1 << " AO SERVIDOR]" << std::endl;
+                //imprimirBitsDoPacote(packet_data);
+                imprimirPacoteInterpretado(packet_data);
+                
+                sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
+
+                int elapsed = 0;
+                while (!ack_received && elapsed < ACK_TIMEOUT_MS) {
+                    this_thread::sleep_for(chrono::milliseconds(10));
+                    elapsed += 10;
+                }
+            }
+
+            if (!ack_received) {
+                cout << "[ERROR] Pacote " << (i + 1) << " falhou após 3 tentativas" << endl;
+                break;
             }
         }
 
-        if (!ack_received) {
-            cout << "[ERROR] Pacote " << (i + 1) << " falhou após 3 tentativas" << endl;
-            break;
+        // Enviar desconexão
+        SlowPack pkt;
+        {
+            lock_guard<mutex> lock(session_mutex);
+            pkt.setSid(session_sid);
+            pkt.setFlags(createFlags(true, true, true, false, false));
+            pkt.setSttl(session_sttl);
+            pkt.setSeqnum(bitset<32>(session_seq.to_ulong()+1));
+            pkt.setAcknum(session_ack);
+            pkt.setWindow(bitset<16>(0));
+            pkt.setFid(bitset<8>(0));
+            pkt.setFo(bitset<8>(0));
+            pkt.setData(vector<uint8_t>());
         }
-    }
 
-    // Enviar desconexão
-    SlowPack pkt;
-    {
-        lock_guard<mutex> lock(session_mutex);
-        pkt.setSid(session_sid);
-        pkt.setFlags(createFlags(true, true, true, false, false));
-        pkt.setSttl(session_sttl);
-        pkt.setSeqnum(bitset<32>(session_seq.to_ulong()+1));
-        pkt.setAcknum(session_ack);
-        pkt.setWindow(bitset<16>(0));
-        pkt.setFid(bitset<8>(0));
-        pkt.setFo(bitset<8>(0));
-        pkt.setData(vector<uint8_t>());
-    }
+        vector<uint8_t> packet_data = pkt.getSlow(false);
+        std::cout << "\n[ENVIANDO PEDIDO PARA DESCONECTAR]" << std::endl;
+        //imprimirBitsDoPacote(packet_data);
+        imprimirPacoteInterpretado(packet_data);
+        sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 
-    vector<uint8_t> packet_data = pkt.getSlow(false);
-    std::cout << "\n[BITS - ORDEM REAL DE ENVIO]" << std::endl;
-    //imprimirBitsDoPacote(packet_data);
-    imprimirPacoteInterpretado(packet_data);
-    cout << "[SEND] DISCONNECT | Seq: " << (session_seq.to_ulong() - 1) << " | Flags: CONNECT+ACK+REVIVE" << endl;
-    sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
+        this_thread::sleep_for(chrono::milliseconds(500));
 
-    this_thread::sleep_for(chrono::milliseconds(500));
+        // Tentar reviver se STTL > 0
+        {
+            lock_guard<mutex> lock(session_mutex);
+            if (session_sttl.to_ulong() > 0) {
+                SlowPack revive_pkt;
+                revive_pkt.setSid(session_sid);
+                revive_pkt.setFlags(createFlags(false, true, true, false, false));
+                revive_pkt.setSttl(session_sttl);
+                revive_pkt.setSeqnum(session_seq);
+                revive_pkt.setAcknum(session_ack);
+                revive_pkt.setWindow(session_window);
+                revive_pkt.setFid(bitset<8>(0));
+                revive_pkt.setFo(bitset<8>(0));
+                revive_pkt.setData(vector<uint8_t>());
 
-    // Tentar reviver se STTL > 0
-    {
-        lock_guard<mutex> lock(session_mutex);
-        if (session_sttl.to_ulong() > 0) {
-            SlowPack revive_pkt;
-            revive_pkt.setSid(session_sid);
-            revive_pkt.setFlags(createFlags(false, true, true, false, false));
-            revive_pkt.setSttl(session_sttl);
-            revive_pkt.setSeqnum(session_seq);
-            revive_pkt.setAcknum(session_ack);
-            revive_pkt.setWindow(session_window);
-            revive_pkt.setFid(bitset<8>(0));
-            revive_pkt.setFo(bitset<8>(0));
-            revive_pkt.setData(vector<uint8_t>());
-
-            vector<uint8_t> revive_data = revive_pkt.getSlow(false);
-            std::cout << "\n[BITS - ORDEM REAL DE REVIVER]" << std::endl;
-            //imprimirBitsDoPacote(revive_data);
-            imprimirPacoteInterpretado(revive_data);
-            cout << "[SEND] REVIVE | Seq: " << session_seq.to_ulong() << " | STTL: " << session_sttl.to_ulong() << endl;
-            sendto(sockfd, revive_data.data(), revive_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
+                vector<uint8_t> revive_data = revive_pkt.getSlow(false);
+                std::cout << "\n[ENVIANDO PEDIDO PARA REVIVER]" << std::endl;
+                //imprimirBitsDoPacote(revive_data);
+                imprimirPacoteInterpretado(revive_data);
+                sendto(sockfd, revive_data.data(), revive_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
+            }
         }
+        this_thread::sleep_for(chrono::milliseconds(1000));
     }
     
     // Parar o countdown do STTL
@@ -329,11 +321,9 @@ void receive_loop() {
     while (true) {
         ssize_t len = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (sockaddr*)&central_addr, &addr_len);
         if (len <= 0) continue;
-        
-        cout << "Recebeu " << len << endl;
 
         vector<uint8_t> received_data(buffer, buffer + len);
-        std::cout << "\n[BITS - ORDEM REAL DE RECEBIMENTO]" << std::endl;
+        std::cout << "\n[PACOTE RECEBIDO]" << std::endl;
         //imprimirBitsDoPacote(received_data);
         imprimirPacoteInterpretado(received_data);
         
@@ -438,7 +428,7 @@ void receive_loop() {
                 sttl_running = true;
                 thread sttl_thread(sttl_countdown);
                 sttl_thread.detach();
-                cout << "[CONN] Sessão estabelecida!" << endl << endl;
+                cout << "[CONN] Sessão estabelecida!" << endl;
             }
             else if (is_ack && session_established) {
                 ack_received = true;
