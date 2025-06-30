@@ -20,16 +20,12 @@ constexpr size_t BUFFER_SIZE = 1472;
 constexpr int NUM_PACOTES = 3;
 constexpr int ACK_TIMEOUT_MS = 1000;
 
-bitset<128> session_verdadeiro = 0;
-bitset<32> seq_verdadeiro = 0;
-bitset<32> ack_verdadeiro = 0;
-bitset<27> sttl_verdadeiro = 0;
-
-UUIDPack session_id;
-uint32_t session_seq = 0;
-uint32_t session_ack = 0;
-uint32_t session_sttl = 0;
-uint16_t session_window = 1024;
+// Variáveis globais de sessão - usando apenas bitset para consistência
+bitset<128> session_sid = 0;
+bitset<32> session_seq = 0;
+bitset<32> session_ack = 0;
+bitset<27> session_sttl = 0;
+bitset<16> session_window = 1024;
 
 atomic<bool> session_established(false);
 atomic<bool> ack_received(false);
@@ -37,6 +33,22 @@ mutex session_mutex;
 
 int sockfd;
 sockaddr_in central_addr;
+
+// Thread para decrementar STTL
+atomic<bool> sttl_running(false);
+
+void sttl_countdown() {
+    while (sttl_running) {
+        this_thread::sleep_for(chrono::seconds(1));
+        if (sttl_running) {
+            lock_guard<mutex> lock(session_mutex);
+            if (session_sttl.to_ulong() > 0) {
+                session_sttl = bitset<27>(session_sttl.to_ulong() - 1);
+                cout << "[STTL] Decrementado para: " << session_sttl.to_ulong() << endl;
+            }
+        }
+    }
+}
 
 string bits_from_bytes(const vector<uint8_t>& data, size_t bit_offset, size_t bit_length) {
     string result;
@@ -203,7 +215,7 @@ void send_connect() {
     vector<uint8_t> packet_data = pkt.getSlow(true);
     imprimirBitsDoPacote(packet_data);
 
-    cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window << endl;
+    cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window.to_ulong() << endl;
 
     cout << endl << endl;
 
@@ -227,12 +239,12 @@ void send_data_loop(int num_pacotes) {
             
             {
                 lock_guard<mutex> lock(session_mutex);
-                pkt.setSid(session_verdadeiro);
+                pkt.setSid(session_sid);
                 pkt.setFlags(createFlags(false, false, true, false, false));
-                pkt.setSttl(bitset<27>(0));
-                pkt.setSeqnum(bitset<32>(seq_verdadeiro.to_ulong()+1));
-                pkt.setAcknum(bitset<32>(0));
-                pkt.setWindow(bitset<16>(1024));
+                pkt.setSttl(session_sttl);
+                pkt.setSeqnum(bitset<32>(session_seq.to_ulong()+1));
+                pkt.setAcknum(session_ack);
+                pkt.setWindow(session_window);
                 pkt.setFid(bitset<8>(0));
                 pkt.setFo(bitset<8>(0));
 
@@ -242,9 +254,10 @@ void send_data_loop(int num_pacotes) {
             }
 
             vector<uint8_t> packet_data = pkt.getSlow(false);
+            imprimirBitsDoPacote(packet_data);
             
             cout << "[SEND] DATA #" << (i + 1) << " (try " << tentativas 
-                 << ") | Seq: " << session_seq << " | Ack: " << session_ack << " | Tamanho: " << packet_data.size() << endl;
+                 << ") | Seq: " << session_seq.to_ulong() << " | Ack: " << session_ack.to_ulong() << " | Tamanho: " << packet_data.size() << endl;
             //print_packet_hex(packet_data, "OUT");
             
             sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
@@ -263,7 +276,7 @@ void send_data_loop(int num_pacotes) {
 
         {
             lock_guard<mutex> lock(session_mutex);
-            session_seq++;
+            session_seq = bitset<32>(session_seq.to_ulong() + 1);
         }
     }
 
@@ -271,11 +284,11 @@ void send_data_loop(int num_pacotes) {
     SlowPack pkt;
     {
         lock_guard<mutex> lock(session_mutex);
-        pkt.setSid(session_id.getUUID());
-        pkt.setFlags(createFlags(true, false, true, false, true));
-        pkt.setSttl(bitset<27>(session_sttl));
-        pkt.setSeqnum(bitset<32>(session_seq++));
-        pkt.setAcknum(bitset<32>(session_ack));
+        pkt.setSid(session_sid);
+        pkt.setFlags(createFlags(true, true, true, false, false));
+        pkt.setSttl(session_sttl);
+        pkt.setSeqnum(bitset<32>(session_seq.to_ulong()+1));
+        pkt.setAcknum(session_ack);
         pkt.setWindow(bitset<16>(0));
         pkt.setFid(bitset<8>(0));
         pkt.setFo(bitset<8>(0));
@@ -283,7 +296,8 @@ void send_data_loop(int num_pacotes) {
     }
 
     vector<uint8_t> packet_data = pkt.getSlow(false);
-    cout << "[SEND] DISCONNECT | Seq: " << (session_seq - 1) << " | Flags: CONNECT+ACK+REVIVE" << endl;
+    imprimirBitsDoPacote(packet_data);
+    cout << "[SEND] DISCONNECT | Seq: " << (session_seq.to_ulong() - 1) << " | Flags: CONNECT+ACK+REVIVE" << endl;
     //print_packet_hex(packet_data, "OUT");
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 
@@ -292,24 +306,27 @@ void send_data_loop(int num_pacotes) {
     // Tentar reviver se STTL > 0
     {
         lock_guard<mutex> lock(session_mutex);
-        if (session_sttl > 0) {
+        if (session_sttl.to_ulong() > 0) {
             SlowPack revive_pkt;
-            revive_pkt.setSid(session_id.getUUID());
+            revive_pkt.setSid(session_sid);
             revive_pkt.setFlags(createFlags(false, false, true, false, true));
-            revive_pkt.setSttl(bitset<27>(session_sttl));
-            revive_pkt.setSeqnum(bitset<32>(session_seq));
-            revive_pkt.setAcknum(bitset<32>(session_ack));
-            revive_pkt.setWindow(bitset<16>(session_window));
+            revive_pkt.setSttl(session_sttl);
+            revive_pkt.setSeqnum(session_seq);
+            revive_pkt.setAcknum(session_ack);
+            revive_pkt.setWindow(session_window);
             revive_pkt.setFid(bitset<8>(0));
             revive_pkt.setFo(bitset<8>(0));
             revive_pkt.setData(vector<uint8_t>());
 
             vector<uint8_t> revive_data = revive_pkt.getSlow(false);
-            cout << "[SEND] REVIVE | Seq: " << session_seq << " | STTL: " << session_sttl << endl;
+            cout << "[SEND] REVIVE | Seq: " << session_seq.to_ulong() << " | STTL: " << session_sttl.to_ulong() << endl;
             //print_packet_hex(revive_data, "OUT");
             sendto(sockfd, revive_data.data(), revive_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
         }
     }
+    
+    // Parar o countdown do STTL
+    sttl_running = false;
 }
 
 
@@ -465,10 +482,6 @@ void receive_loop() {
             bool is_failed = recv_flags[3];
             bool is_revive = recv_flags[4];
 
-            // Captando dados do SID
-            UUIDPack uuidAux;
-            uuidAux.setAllBy16Bytes(sid);
-
             if (true) {
                 SlowPack p;
 
@@ -543,27 +556,28 @@ void receive_loop() {
                 vector<uint8_t> packed = p.getSlow(false);
                 //print_packet_precise_bits(packed, "SLOW");
 
-                session_verdadeiro = sid_bits;
-                sttl_verdadeiro = sttl_bits;
-                seq_verdadeiro = seq_bits;
-                ack_verdadeiro = ack_bits;
+                // Atualizar variáveis globais de sessão
+                {
+                    lock_guard<mutex> lock(session_mutex);
+                    session_sid = sid_bits;
+                    session_sttl = sttl_bits;  // STTL sempre atualizado pelo servidor
+                    session_seq = seq_bits;
+                    session_ack = ack_bits;
+                    session_window = window_bits;
+                }
             }
             
             
             if (is_accept && !session_established) {
                 lock_guard<mutex> lock(session_mutex);
-                session_id = uuidAux;
-                session_sttl = sttl;
-                session_seq = seqnum;
-                session_ack = acknum;
-                session_window = window;
                 session_established = true;
+                // Iniciar countdown do STTL
+                sttl_running = true;
+                thread sttl_thread(sttl_countdown);
+                sttl_thread.detach();
                 cout << "[CONN] Sessão estabelecida!" << endl << endl;
             }
             else if (is_ack && session_established) {
-                lock_guard<mutex> lock(session_mutex);
-                session_ack = acknum;
-                session_window = window;
                 ack_received = true;
                 cout << "[ACK] Confirmado!" << endl;
             }
