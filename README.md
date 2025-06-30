@@ -38,6 +38,6 @@ Os testes foram feitos baseando-se nas seguintes formas de envio/recebimento de 
 
 - Data e Ack: estabelecida a conexão, podemos enviar pacotes com dados e manipulando os valores dos campos ```Seqnum``` e ```Acknum```. Como retorno, a central retorna um pacote de confirmação com um novo ```Sttl```.
 
-- Revive e Ack: tenta reestabelecer uma conexão com o envio de um pacote semelhante ao de dados, mas com a flag ```revive = 1```. Como retorno, a central pode aceitar o reestabelecimento da conexão (com um pacote de Ack) ou negá-lo.
+- Revive e Ack: tenta reestabelecer uma conexão com o envio de um pacote semelhante ao de dados, mas com a flag ```Revive = 1```. Como retorno, a central pode aceitar o reestabelecimento da conexão (com um pacote de Ack) ou negá-lo.
 
 - Disconnect e Ack: finaliza uma conexão a partir do envio de um pacote com as flags ```Ack```, ```Connect``` e ```Revive``` ligadas. A central retorna um pacote de confirmação Ack.
