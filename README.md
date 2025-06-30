@@ -29,6 +29,18 @@ make
 make run
 ```
 
+## Sobre o Código
+
+O código está dividido em 4 módulos principais:
+
+- ```main```: módulo principal, onde implementamos as threads de envio e recebimento de pacotes e as funções relacionadas a esses processos.
+
+- ```ConnectCentral```: módulo voltado a conexão com a Central.
+
+- ```UUIDPack```: módulo de implementação do subpacote UUID (criação, configuração de campos e recuperação).
+
+- ```SlowPack```: módulo de implementação do pacote SLOW (criação, configuração dos campos e recuperação.
+
 ## Exemplos e Testes
 
 Os testes foram feitos baseando-se nas seguintes formas de envio/recebimento de pacotes:
