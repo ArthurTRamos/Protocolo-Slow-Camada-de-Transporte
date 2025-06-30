@@ -47,8 +47,24 @@ Os testes foram feitos baseando-se nas seguintes formas de envio/recebimento de 
 
 - Connect e setup: peripheral envia um pacote com a flag ```Connect = 1```, solicitando uma conexão. Em seguida, a central retorna um pacote com a flag ```Accept/Reject = 1``` e com os valores de ```sid``` e de ```sttl``` que deverão ser utilizados desse ponto em diante na comunicação.
 
+<div align="center">
+  <img src="Conexao.png" alt="descrição" height = "auto" width="500">
+</div>
+
 - Data e Ack: estabelecida a conexão, podemos enviar pacotes com dados e manipulando os valores dos campos ```Seqnum``` e ```Acknum```. Como retorno, a central retorna um pacote de confirmação com um novo ```Sttl```.
+
+<div align="center">
+  <img src="Dados.png" alt="descrição" height = "auto" width="500">
+</div>
 
 - Revive e Ack: tenta reestabelecer uma conexão com o envio de um pacote semelhante ao de dados, mas com a flag ```Revive = 1```. Como retorno, a central pode aceitar o reestabelecimento da conexão (com um pacote de Ack) ou negá-lo.
 
+<div align="center">
+  <img src="Reviver.png" alt="descrição" height = "auto" width="500">
+</div>
+
 - Disconnect e Ack: finaliza uma conexão a partir do envio de um pacote com as flags ```Ack```, ```Connect``` e ```Revive``` ligadas. A central retorna um pacote de confirmação Ack.
+
+<div align="center">
+  <img src="Desconectar.png" alt="descrição" height = "auto" width="500">
+</div>
