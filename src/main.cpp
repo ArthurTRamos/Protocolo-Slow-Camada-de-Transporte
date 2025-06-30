@@ -17,8 +17,13 @@ using namespace std;
 
 constexpr int SLOW_PORT = 7033;
 constexpr size_t BUFFER_SIZE = 1472;
-constexpr int NUM_PACOTES = 1;
+constexpr int NUM_PACOTES = 3;
 constexpr int ACK_TIMEOUT_MS = 1000;
+
+bitset<128> session_verdadeiro = 0;
+bitset<32> seq_verdadeiro = 0;
+bitset<32> ack_verdadeiro = 0;
+bitset<27> sttl_verdadeiro = 0;
 
 UUIDPack session_id;
 uint32_t session_seq = 0;
@@ -44,6 +49,36 @@ string bits_from_bytes(const vector<uint8_t>& data, size_t bit_offset, size_t bi
     return result;
 }
 
+void imprimirBitsDoPacote(const std::vector<uint8_t>& buffer) {
+    std::cout << "[BITS - ORDEM REAL DE ENVIO]" << std::endl;
+
+    int bit_idx = 0;
+    auto printBits = [&](int numBits) {
+        for (int b = 0; b < numBits; ++b, ++bit_idx) {
+            uint8_t byte = buffer[bit_idx / 8];
+            int bit = (byte >> (bit_idx % 8)) & 1;
+            std::cout << bit;
+        }
+        std::cout << std::endl;
+    };
+
+    // Tamanhos em bits por ordem real de envio:
+    printBits(128); // SID
+    printBits(5);   // FLAGS
+    printBits(27);  // STTL
+    printBits(32);  // SEQ
+    printBits(32);  // ACK
+    printBits(16);  // WINDOW
+    printBits(8);   // FID
+    printBits(8);   // FO
+
+    int total_bits = buffer.size() * 8;
+    int remaining = total_bits - bit_idx;
+    if (remaining > 0)
+        printBits(remaining);
+
+    std::cout << "[FIM DOS BITS] Total: " << total_bits << " bits" << std::endl;
+}
 
 void print_packet_precise_bits(const vector<uint8_t>& data, const string& direction) {
     cout << "[" << direction << "] " << data.size() << " bytes\n";
@@ -117,6 +152,12 @@ void parse_received_packet(const uint8_t* buffer, size_t len) {
     seqnum = le32toh(seqnum);
     acknum = le32toh(acknum);
     window = le16toh(window);
+
+    cout << "[RECV] SID (binário): ";
+    for (int i = 0; i < 16; i++) {
+        cout << bitset<8>(sid[i]).to_string() << " "; // 8 bits por byte
+    }
+    cout << endl;
     
     // Imprimir SID em hexadecimal
     cout << "[RECV] SID: ";
@@ -154,17 +195,19 @@ void send_connect() {
     pkt.setSttl(bitset<27>(0));
     pkt.setSeqnum(bitset<32>(0));
     pkt.setAcknum(bitset<32>(0));
-    pkt.setWindow(bitset<16>(session_window));
+    pkt.setWindow(bitset<16>(1472));
     pkt.setFid(bitset<8>(0));
     pkt.setFo(bitset<8>(0));
     pkt.setData(vector<uint8_t>());
 
     vector<uint8_t> packet_data = pkt.getSlow(true);
+    imprimirBitsDoPacote(packet_data);
 
     cout << "[SEND] CONNECT | Seq: 0 | Ack: 0 | Win: " << session_window << endl;
-    print_packet_precise_bits(packet_data, "OUT");
 
     cout << endl << endl;
+
+    
     
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 }
@@ -184,12 +227,12 @@ void send_data_loop(int num_pacotes) {
             
             {
                 lock_guard<mutex> lock(session_mutex);
-                pkt.setSid(session_id.getUUID());
+                pkt.setSid(session_verdadeiro);
                 pkt.setFlags(createFlags(false, false, true, false, false));
-                pkt.setSttl(bitset<27>(session_sttl));
-                pkt.setSeqnum(bitset<32>(1));
-                pkt.setAcknum(bitset<32>(session_seq));
-                pkt.setWindow(bitset<16>(session_window));
+                pkt.setSttl(bitset<27>(0));
+                pkt.setSeqnum(bitset<32>(seq_verdadeiro.to_ulong()+1));
+                pkt.setAcknum(bitset<32>(0));
+                pkt.setWindow(bitset<16>(1024));
                 pkt.setFid(bitset<8>(0));
                 pkt.setFo(bitset<8>(0));
 
@@ -199,9 +242,6 @@ void send_data_loop(int num_pacotes) {
             }
 
             vector<uint8_t> packet_data = pkt.getSlow(false);
-
-            print_packet_precise_bits(packet_data, "OUT");
-
             
             cout << "[SEND] DATA #" << (i + 1) << " (try " << tentativas 
                  << ") | Seq: " << session_seq << " | Ack: " << session_ack << " | Tamanho: " << packet_data.size() << endl;
@@ -287,6 +327,86 @@ void receive_loop() {
 
         vector<uint8_t> received_data(buffer, buffer + len);
 
+
+// Após printar os hexadecimais:
+
+    int bit_idx = 0;
+
+    // SID (128 bits)
+    for (int b = 0; b < 128; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // STTL (27 bits)
+    for (int b = 0; b < 27; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // FLAGS (5 bits)
+    for (int b = 0; b < 5; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // SeqNum (32 bits)
+    for (int b = 0; b < 32; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // AckNum (32 bits)
+    for (int b = 0; b < 32; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // Window (16 bits)
+    for (int b = 0; b < 16; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // Fid (8 bits)
+    for (int b = 0; b < 8; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // Fo (8 bits)
+    for (int b = 0; b < 8; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
+    // Já foram 256 bits (32 bytes), agora imprime o restante (data)
+    int total_bits = len * 8;
+    int data_bits = total_bits - bit_idx;
+
+    for (int b = 0; b < data_bits; ++b, ++bit_idx) {
+        uint8_t byte = buffer[bit_idx / 8];
+        int bit = (byte >> (bit_idx % 8)) & 1;
+        cout << bit;
+    }
+    cout << endl;
+
         for (int i = 0; i < len; ++i)
             printf("%02X ", static_cast<uint8_t>(buffer[i]));
         printf("\n");
@@ -348,6 +468,87 @@ void receive_loop() {
             // Captando dados do SID
             UUIDPack uuidAux;
             uuidAux.setAllBy16Bytes(sid);
+
+            if (true) {
+                SlowPack p;
+
+                // --- SID ---
+                bitset<128> sid_bits;
+                for (int i = 0; i < 16; ++i) {
+                    for (int b = 0; b < 8; ++b) {
+                        bool bit_val = (buffer[i] >> b) & 1;
+                        sid_bits[i * 8 + b] = bit_val;
+                    }
+                }
+
+                // --- Flags e STTL ---
+                bitset<8> byte16_bits(buffer[16]);
+                
+                // Flags: bits 3 a 7 (flag 0 = bit 3, ..., flag 4 = bit 7)
+                bitset<5> flags_bits;
+                for (int i = 0; i < 5; ++i) {
+                    flags_bits[i] = byte16_bits[i + 3];
+                }
+
+                // STTL: bits 0,1,2 do byte[16] (lembrando: bit 2 = menos significativo)
+                uint32_t sttl_lsb = 0;
+                sttl_lsb |= (byte16_bits[2] << 0);
+                sttl_lsb |= (byte16_bits[1] << 1);
+                sttl_lsb |= (byte16_bits[0] << 2);
+
+                uint32_t sttl_msb = 0;
+                sttl_msb |= buffer[17] << 0;
+                sttl_msb |= buffer[18] << 8;
+                sttl_msb |= buffer[19] << 16;
+
+                uint32_t sttl_full = (sttl_msb << 3) | sttl_lsb;
+                bitset<27> sttl_bits(sttl_full);
+
+                // --- SeqNum ---
+                uint32_t raw_seq;
+                memcpy(&raw_seq, buffer + 20, 4);
+                bitset<32> seq_bits(le32toh(raw_seq));
+
+                // --- AckNum ---
+                uint32_t raw_ack;
+                memcpy(&raw_ack, buffer + 24, 4);
+                bitset<32> ack_bits(le32toh(raw_ack));
+
+                // --- Window ---
+                uint16_t raw_win;
+                memcpy(&raw_win, buffer + 28, 2);
+                bitset<16> window_bits(le16toh(raw_win));
+
+                // --- Fragment ID e Offset ---
+                bitset<8> fid_bits(buffer[30]);
+                bitset<8> fo_bits(buffer[31]);
+
+                // --- Payload (se existir além dos 32 bytes) ---
+                vector<uint8_t> payload;
+                if (len > 32)
+                    payload.insert(payload.end(), buffer + 32, buffer + len);
+
+                // --- Setar no pacote ---
+                p.setSid(sid_bits);
+                p.setFlags(flags_bits);
+                p.setSttl(sttl_bits);
+                p.setSeqnum(seq_bits);
+                p.setAcknum(ack_bits);
+                p.setWindow(window_bits);
+                p.setFid(fid_bits);
+                p.setFo(fo_bits);
+                p.setData(payload);
+
+                // Serializar e imprimir
+                vector<uint8_t> packed = p.getSlow(false);
+                //print_packet_precise_bits(packed, "SLOW");
+
+                session_verdadeiro = sid_bits;
+                sttl_verdadeiro = sttl_bits;
+                seq_verdadeiro = seq_bits;
+                ack_verdadeiro = ack_bits;
+            }
+            
             
             if (is_accept && !session_established) {
                 lock_guard<mutex> lock(session_mutex);
