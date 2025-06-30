@@ -31,11 +31,9 @@ make run
 
 ## Sobre o Código
 
-O código está dividido em 4 módulos principais:
+O código está dividido em 3 módulos principais:
 
-- ```main```: módulo principal, onde implementamos as threads de envio e recebimento de pacotes e as funções relacionadas a esses processos.
-
-- ```ConnectCentral```: módulo voltado a conexão com a Central.
+- ```main```: módulo principal, onde implementamos a conexão com a Central, as threads de envio e recebimento de pacotes e as funções relacionadas a esses processos.
 
 - ```UUIDPack```: módulo de implementação do subpacote UUID (criação, configuração de campos e recuperação).
 
