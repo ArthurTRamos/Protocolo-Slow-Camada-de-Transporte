@@ -6,7 +6,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 
 # Arquivos-fonte
-SRCS = main.cpp SlowPack.cpp UUIDPack.cpp ConnectCentral.cpp
+SRCS = main.cpp SlowPack.cpp UUIDPack.cpp
 
 # Arquivos-objeto (transforma .cpp em .o)
 OBJS = $(SRCS:.cpp=.o)

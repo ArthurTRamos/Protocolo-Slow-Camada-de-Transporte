@@ -1,3 +1,10 @@
+/*
+2025 - Autores:
+Maicon Chaves Marques - 14593530
+Arthur Trottmann Ramos - 14681052
+Karl Cruz Altenhofen - 14585976
+*/
+
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -10,33 +17,37 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+
+// Bibliotecas do projeto
 #include "UUIDPack.h"
 #include "SlowPack.h"
 
 using namespace std;
 
-constexpr int SLOW_PORT = 7033;
-constexpr size_t BUFFER_SIZE = 1472;
-constexpr int NUM_PACOTES = 3;
-constexpr int ACK_TIMEOUT_MS = 1000;
+// Constantes de configuração
+constexpr int SLOW_PORT = 7033;           // Porta UDP do servidor
+constexpr size_t BUFFER_SIZE = 1472;      // Tamanho máximo do buffer de pacotes
+constexpr int NUM_PACOTES = 3;            // Número de pacotes a enviar por ciclo
+constexpr int ACK_TIMEOUT_MS = 1000;      // Timeout de espera por ACK em milissegundos
 
-// Variáveis globais de sessão - usando apenas bitset para consistência
-bitset<128> session_sid = 0;
-bitset<32> session_seq = 0;
-bitset<32> session_ack = 0;
-bitset<27> session_sttl = 0;
-bitset<16> session_window = 1024;
+// Variáveis globais da sessão
+UUIDPack session_sid;                     // Identificador único da sessão (SID)
+bitset<32> session_seq = 0;               // Número de sequência
+bitset<32> session_ack = 0;               // Número de ACK
+bitset<27> session_sttl = 0;              // Tempo de vida da sessão (em segundos)
+bitset<16> session_window = 1024;         // Janela de controle de fluxo
 
-atomic<bool> session_established(false);
-atomic<bool> ack_received(false);
-mutex session_mutex;
+atomic<bool> session_established(false);  // Indica se a sessão foi estabelecida
+atomic<bool> ack_received(false);         // Flag de confirmação de ACK
+mutex session_mutex;                      // Mutex para sincronizar acesso à sessão
 
-int sockfd;
-sockaddr_in central_addr;
+int sockfd;                               // Socket UDP
+sockaddr_in central_addr;                // Endereço do servidor
 
-// Thread para decrementar STTL
+// Controle de execução da thread de STTL
 atomic<bool> sttl_running(false);
 
+// Thread para decrementar o STTL da sessão a cada segundo
 void sttl_countdown() {
     while (sttl_running) {
         this_thread::sleep_for(chrono::seconds(1));
@@ -50,6 +61,7 @@ void sttl_countdown() {
     }
 }
 
+// Converte parte de um vetor de bytes em uma string de bits
 string bits_from_bytes(const vector<uint8_t>& data, size_t bit_offset, size_t bit_length) {
     string result;
     for (size_t i = 0; i < bit_length; ++i) {
@@ -61,9 +73,11 @@ string bits_from_bytes(const vector<uint8_t>& data, size_t bit_offset, size_t bi
     return result;
 }
 
+// Interpreta e imprime os campos de um pacote SLOW
 void imprimirPacoteInterpretado(const std::vector<uint8_t>& buffer) {
     int offset = 0;
 
+    // Funções auxiliares para leitura dos tipos básicos
     auto readUInt = [&](int numBytes) -> uint32_t {
         uint32_t value = 0;
         for (int i = 0; i < numBytes; ++i) {
@@ -86,16 +100,16 @@ void imprimirPacoteInterpretado(const std::vector<uint8_t>& buffer) {
 
     std::cout << "========= PACOTE =========\n";
 
-    // SID (16 bytes)
+    // SID: identificador da sessão
     std::cout << "SID: ";
     for (int i = 0; i < 16; ++i)
         std::cout << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(buffer[offset++]) << " ";
     std::cout << std::dec << std::endl;
 
-    // STTL + FLAGS (4 bytes)
+    // STTL e FLAGS empacotados em 4 bytes
     uint32_t sttlFlags = readUInt(4);
-    uint32_t flags = sttlFlags & 0x1F;          // últimos 5 bits
-    uint32_t sttl = (sttlFlags >> 5) & 0x7FFFFFF; // 27 bits seguintes
+    uint32_t flags = sttlFlags & 0x1F;             // Últimos 5 bits: FLAGS
+    uint32_t sttl = (sttlFlags >> 5) & 0x7FFFFFF;  // 27 bits restantes: STTL
 
     std::cout << "FLAGS (binário): ";
     for (int i = 4; i >= 0; --i)
@@ -104,27 +118,23 @@ void imprimirPacoteInterpretado(const std::vector<uint8_t>& buffer) {
 
     std::cout << "STTL (decimal): " << sttl << std::endl;
 
-    // SEQ (4 bytes)
-    uint32_t seq = readUInt(4);
+    // Campos de controle e dados
+    uint32_t seq = readUInt(4);           // Número de sequência
     std::cout << "SEQNUM: " << seq << std::endl;
 
-    // ACK (4 bytes)
-    uint32_t ack = readUInt(4);
+    uint32_t ack = readUInt(4);           // Número de ACK
     std::cout << "ACKNUM: " << ack << std::endl;
 
-    // WINDOW (2 bytes)
-    uint16_t win = readUShort();
+    uint16_t win = readUShort();          // Tamanho da janela
     std::cout << "WINDOW: " << win << std::endl;
 
-    // FID (1 byte)
-    uint8_t fid = readUChar();
+    uint8_t fid = readUChar();            // Fragment ID
     std::cout << "FID: " << static_cast<int>(fid) << std::endl;
 
-    // FO (1 byte)
-    uint8_t fo = readUChar();
+    uint8_t fo = readUChar();             // Fragment Offset
     std::cout << "FO: " << static_cast<int>(fo) << std::endl;
 
-    // DATA (resto)
+    // Dados em ASCII
     std::cout << "DATA (ASCII): ";
     while (offset < int(buffer.size())) {
         char c = static_cast<char>(buffer[offset++]);
@@ -135,6 +145,7 @@ void imprimirPacoteInterpretado(const std::vector<uint8_t>& buffer) {
     std::cout << "========================================\n" << std::endl;
 }
 
+// Imprime os bits de um pacote em ordem de envio
 void imprimirBitsDoPacote(const std::vector<uint8_t>& buffer) {
     int bit_idx = 0;
     auto printBits = [&](int numBits) {
@@ -146,23 +157,14 @@ void imprimirBitsDoPacote(const std::vector<uint8_t>& buffer) {
         std::cout << std::endl;
     };
 
-    // Tamanhos em bits por ordem real de envio:
-    cout << "SID: \n";
-    printBits(128); // SID
-    cout << "FLAGS: \n";
-    printBits(5);   // FLAGS
-    cout << "STTL: \n";
-    printBits(27);  // STTL
-    cout << "SEQ: \n";
-    printBits(32);  // SEQ
-    cout << "ACK: \n";
-    printBits(32);  // ACK
-    cout << "WINDOW: \n";
-    printBits(16);  // WINDOW
-    cout << "FID: \n";
-    printBits(8);   // FID
-    cout << "FO: \n";
-    printBits(8);   // FO
+    cout << "SID: \n"; printBits(128);
+    cout << "FLAGS: \n"; printBits(5);
+    cout << "STTL: \n"; printBits(27);
+    cout << "SEQ: \n"; printBits(32);
+    cout << "ACK: \n"; printBits(32);
+    cout << "WINDOW: \n"; printBits(16);
+    cout << "FID: \n"; printBits(8);
+    cout << "FO: \n"; printBits(8);
 
     int total_bits = buffer.size() * 8;
     int remaining = total_bits - bit_idx;
@@ -172,7 +174,7 @@ void imprimirBitsDoPacote(const std::vector<uint8_t>& buffer) {
     std::cout << "[FIM DOS BITS] Total: " << total_bits << " bits\n\n" << std::endl;
 }
 
-// Função para criar flags como bitset<5>
+// Cria conjunto de flags para o campo de controle
 bitset<5> createFlags(bool connect, bool accept, bool ack, bool failed, bool revive) {
     bitset<5> flags;
     flags[0] = connect;
@@ -183,12 +185,13 @@ bitset<5> createFlags(bool connect, bool accept, bool ack, bool failed, bool rev
     return flags;
 }
 
+// Envia pacote de conexão inicial
 void send_connect() {
-    bitset<128> uuid_para_debug(0);
+    session_sid.setAllBy128Bits(bitset<128>(0)); // SID zerado para nova sessão
 
     SlowPack pkt;
-    pkt.setSid(uuid_para_debug);
-    pkt.setFlags(createFlags(true, false, false, false, false));
+    pkt.setSid(session_sid.getUUID());
+    pkt.setFlags(createFlags(true, false, false, false, false)); // Flag de conexão
     pkt.setSttl(bitset<27>(0));
     pkt.setSeqnum(bitset<32>(0));
     pkt.setAcknum(bitset<32>(0));
@@ -199,12 +202,11 @@ void send_connect() {
 
     vector<uint8_t> packet_data = pkt.getSlow(true);
     std::cout << "\n[ENVIANDO PEDIDO DE CONEXÃO AO SERVIDOR]" << std::endl;
-    //imprimirBitsDoPacote(packet_data);
     imprimirPacoteInterpretado(packet_data);
-
     sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 }
 
+// Loop de envio de pacotes e gerenciamento de desconexão/revivência
 void send_data_loop(int num_pacotes) {
     while (!session_established) {
         this_thread::sleep_for(chrono::milliseconds(100));
@@ -223,10 +225,10 @@ void send_data_loop(int num_pacotes) {
             while (!ack_received && tentativas < 3) {
                 tentativas++;
                 SlowPack pkt;
-                
+
                 {
                     lock_guard<mutex> lock(session_mutex);
-                    pkt.setSid(session_sid);
+                    pkt.setSid(session_sid.getUUID());
                     pkt.setFlags(createFlags(false, false, true, false, false));
                     pkt.setSttl(session_sttl);
                     pkt.setSeqnum(bitset<32>(session_seq));
@@ -242,9 +244,7 @@ void send_data_loop(int num_pacotes) {
 
                 vector<uint8_t> packet_data = pkt.getSlow(false);
                 std::cout << "\n[ENVIANDO DADO " << (NUM_PACOTES*a)+i+1 << " AO SERVIDOR]" << std::endl;
-                //imprimirBitsDoPacote(packet_data);
                 imprimirPacoteInterpretado(packet_data);
-                
                 sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 
                 int elapsed = 0;
@@ -260,12 +260,12 @@ void send_data_loop(int num_pacotes) {
             }
         }
 
-        // Enviar desconexão
+        // Envia pacote de desconexão
         SlowPack pkt;
         {
             lock_guard<mutex> lock(session_mutex);
-            pkt.setSid(session_sid);
-            pkt.setFlags(createFlags(true, true, true, false, false));
+            pkt.setSid(session_sid.getUUID());
+            pkt.setFlags(createFlags(true, true, true, false, false)); // Conecta + Aceita + ACK
             pkt.setSttl(session_sttl);
             pkt.setSeqnum(bitset<32>(session_seq.to_ulong()+1));
             pkt.setAcknum(session_ack);
@@ -277,19 +277,18 @@ void send_data_loop(int num_pacotes) {
 
         vector<uint8_t> packet_data = pkt.getSlow(false);
         std::cout << "\n[ENVIANDO PEDIDO PARA DESCONECTAR]" << std::endl;
-        //imprimirBitsDoPacote(packet_data);
         imprimirPacoteInterpretado(packet_data);
         sendto(sockfd, packet_data.data(), packet_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
 
         this_thread::sleep_for(chrono::milliseconds(500));
 
-        // Tentar reviver se STTL > 0
+        // Tenta reviver a sessão caso STTL ainda esteja válido
         {
             lock_guard<mutex> lock(session_mutex);
             if (session_sttl.to_ulong() > 0) {
                 SlowPack revive_pkt;
-                revive_pkt.setSid(session_sid);
-                revive_pkt.setFlags(createFlags(false, true, true, false, false));
+                revive_pkt.setSid(session_sid.getUUID());
+                revive_pkt.setFlags(createFlags(false, true, true, false, false)); // Aceita + ACK
                 revive_pkt.setSttl(session_sttl);
                 revive_pkt.setSeqnum(session_seq);
                 revive_pkt.setAcknum(session_ack);
@@ -300,18 +299,17 @@ void send_data_loop(int num_pacotes) {
 
                 vector<uint8_t> revive_data = revive_pkt.getSlow(false);
                 std::cout << "\n[ENVIANDO PEDIDO PARA REVIVER]" << std::endl;
-                //imprimirBitsDoPacote(revive_data);
                 imprimirPacoteInterpretado(revive_data);
                 sendto(sockfd, revive_data.data(), revive_data.size(), 0, (sockaddr*)&central_addr, sizeof(central_addr));
             }
         }
         this_thread::sleep_for(chrono::milliseconds(1000));
     }
-    
-    // Parar o countdown do STTL
-    sttl_running = false;
+
+    sttl_running = false; // Encerra contagem STTL
 }
 
+// Loop de recepção e interpretação de pacotes
 void receive_loop() {
     char buffer[BUFFER_SIZE];
     socklen_t addr_len = sizeof(central_addr);
@@ -324,66 +322,41 @@ void receive_loop() {
 
         vector<uint8_t> received_data(buffer, buffer + len);
         std::cout << "\n[PACOTE RECEBIDO]" << std::endl;
-        //imprimirBitsDoPacote(received_data);
         imprimirPacoteInterpretado(received_data);
-        
+
         if (len >= 32) {
-            // --- Construção do pacote manualmente (modo bit-a-bit) ---
+            // Reconstroi o pacote manualmente (bit a bit)
             SlowPack p;
 
-            // --- SID ---
             bitset<128> sid_bits;
-            for (int i = 0; i < 16; ++i) {
-                for (int b = 0; b < 8; ++b) {
-                    bool bit_val = (buffer[i] >> b) & 1;
-                    sid_bits[i * 8 + b] = bit_val;
-                }
-            }
+            for (int i = 0; i < 16; ++i)
+                for (int b = 0; b < 8; ++b)
+                    sid_bits[i * 8 + b] = (buffer[i] >> b) & 1;
 
-            // --- Flags (bits 0 a 4) ---
-            bitset<5> flags_bits(buffer[16] & 0x1F);  // 0b00011111
+            bitset<5> flags_bits(buffer[16] & 0x1F);
 
             bitset<27> sttl_bits;
             int bit_idx = 0;
-
-            // Bits 5,6,7 do byte[16] (STTL MSBs)
-            for (int i = 5; i <= 7; ++i, ++bit_idx) {
+            for (int i = 5; i <= 7; ++i, ++bit_idx)
                 sttl_bits[bit_idx] = (buffer[16] >> i) & 1;
-            }
-
-            // Bytes 17, 18, 19 (24 bits restantes do STTL)
-            for (int byte_i = 17; byte_i <= 19; ++byte_i) {
-                for (int i = 0; i < 8; ++i, ++bit_idx) {
+            for (int byte_i = 17; byte_i <= 19; ++byte_i)
+                for (int i = 0; i < 8; ++i, ++bit_idx)
                     sttl_bits[bit_idx] = (buffer[byte_i] >> i) & 1;
-                }
-            }
 
+            uint32_t raw_seq; memcpy(&raw_seq, buffer + 20, 4);
+            uint32_t raw_ack; memcpy(&raw_ack, buffer + 24, 4);
+            uint16_t raw_win; memcpy(&raw_win, buffer + 28, 2);
 
-            // --- SeqNum ---
-            uint32_t raw_seq;
-            memcpy(&raw_seq, buffer + 20, 4);
             bitset<32> seq_bits(le32toh(raw_seq));
-
-            // --- AckNum ---
-            uint32_t raw_ack;
-            memcpy(&raw_ack, buffer + 24, 4);
             bitset<32> ack_bits(le32toh(raw_ack));
-
-            // --- Window ---
-            uint16_t raw_win;
-            memcpy(&raw_win, buffer + 28, 2);
             bitset<16> window_bits(le16toh(raw_win));
-
-            // --- Fragment ID e Offset ---
             bitset<8> fid_bits(buffer[30]);
             bitset<8> fo_bits(buffer[31]);
 
-            // --- Payload (se existir além dos 32 bytes) ---
             vector<uint8_t> payload;
             if (len > 32)
                 payload.insert(payload.end(), buffer + 32, buffer + len);
 
-            // --- Setar no pacote ---
             p.setSid(sid_bits);
             p.setFlags(flags_bits);
             p.setSttl(sttl_bits);
@@ -394,29 +367,17 @@ void receive_loop() {
             p.setFo(fo_bits);
             p.setData(payload);
 
-            // Serializar e imprimir
-            vector<uint8_t> packed = p.getSlow(false);
-            //print_packet_precise_bits(packed, "SLOW");
-
-/*                // Para imprimir e verificar
-            cout << "\n\n";
-            for (int i = 0; i < int(sttl_bits.size()); ++i) {
-                std::cout << sttl_bits[i] << " ";
-            }
-            cout << "\n\n";
-
-*/
-            // Atualizar variáveis globais de sessão SEMPRE
+            // Atualiza variáveis globais da sessão
             {
                 lock_guard<mutex> lock(session_mutex);
-                session_sid = sid_bits;
+                session_sid.setAllBy128Bits(sid_bits);
                 session_sttl = sttl_bits;
                 session_seq = seq_bits;
                 session_ack = ack_bits;
                 session_window = window_bits;
             }
 
-            // --- Interpretação dos flags ---
+            // Interpretação de flags
             bool is_accept = flags_bits[1];
             bool is_ack = flags_bits[2];
             bool is_failed = flags_bits[3];
@@ -445,8 +406,9 @@ void receive_loop() {
     }
 }
 
+// Ponto de entrada principal
 int main() {
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0); // Criação do socket UDP
     if (sockfd < 0) {
         perror("Erro ao criar socket");
         return 1;

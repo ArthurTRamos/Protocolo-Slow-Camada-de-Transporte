@@ -12,16 +12,8 @@ UUIDPack::UUIDPack() {
     setCustomC(bitset<62>(0), true);
 }
 
-void UUIDPack::setAllBy16Bytes(uint8_t sid[16]) {
-    // Converter SID para um bitset de 128 bits para facilitar manipulação
-    bitset<128> sid_bits;
-    for (int i = 0; i < 16; i++) {
-        for (int j = 0; j < 8; j++) {
-            sid_bits[i * 8 + j] = (sid[15 - i] >> j) & 1; // Little endian byte order
-        }
-    }
-    
-    // Extrair subcampos do SID (assumindo ordem sequencial dos bits)
+void UUIDPack::setAllBy128Bits(bitset<128> sid_bits) {
+    // Extrair subcampos do bitset (assumindo ordem sequencial dos bits)
     bitset<48> custom_a;
     bitset<4> ver;
     bitset<12> custom_b;
@@ -32,38 +24,32 @@ void UUIDPack::setAllBy16Bytes(uint8_t sid[16]) {
     for (int i = 0; i < 48; i++) {
         custom_a[i] = sid_bits[i];
     }
-
     setCustomA(custom_a, false);
     
     // ver: bits 48-51 (4 bits)
     for (int i = 0; i < 4; i++) {
         ver[i] = sid_bits[48 + i];
     }
-
     setVer(ver, false);
     
     // custom_b: bits 52-63 (12 bits)
     for (int i = 0; i < 12; i++) {
         custom_b[i] = sid_bits[52 + i];
     }
-
     setCustomB(custom_b, false);
     
     // var: bits 64-65 (2 bits)
     for (int i = 0; i < 2; i++) {
         var[i] = sid_bits[64 + i];
     }
-
     setVar(var, false);
     
     // custom_c: bits 66-127 (62 bits)
     for (int i = 0; i < 62; i++) {
         custom_c[i] = sid_bits[66 + i];
     }
-
     setCustomC(custom_c, false);
 }
-
 
 // Se random, então gera o campo de forma aleatória. Senão, atribui o campo ao valor passado
 void UUIDPack::setCustomA(bitset<48> newCustom_a, bool random) {
@@ -128,39 +114,39 @@ void UUIDPack::setVer(bitset<4> newVer, bool random) {
 }
 
 bitset<128> UUIDPack::getUUID() {
-    // Monta o UUID de 128 bits
-    // Bits 127-80: custom_a (48 bits)
-    // Bits 79-76: ver (4 bits)
-    // Bits 75-64: custom_b (12 bits)
-    // Bits 63-62: var (2 bits)
-    // Bits 61-0: custom_c (62 bits)
+    // Monta o UUID de 128 bits conforme RFC9562 UUIDv8
+    // Bits 0-47: custom_a (48 bits)
+    // Bits 48-51: ver (4 bits)
+    // Bits 52-63: custom_b (12 bits)
+    // Bits 64-65: var (2 bits)
+    // Bits 66-127: custom_c (62 bits)
     
     bitset<128> uuid;
     int pos = 0;
     
-    // Bits 0-61: custom_c (62 bits)
-    for (int i = 0; i < 62; i++) {
-        uuid[pos++] = custom_c[i];
+    // Bits 0-47: custom_a (48 bits)
+    for (int i = 0; i < 48; i++) {
+        uuid[pos++] = custom_a[i];
     }
     
-    // Bits 62-63: var (2 bits)
-    for (int i = 0; i < 2; i++) {
-        uuid[pos++] = var[i];
-    }
-    
-    // Bits 64-75: custom_b (12 bits)
-    for (int i = 0; i < 12; i++) {
-        uuid[pos++] = custom_b[i];
-    }
-    
-    // Bits 76-79: ver (4 bits)
+    // Bits 48-51: ver (4 bits)
     for (int i = 0; i < 4; i++) {
         uuid[pos++] = ver[i];
     }
     
-    // Bits 80-127: custom_a (48 bits)
-    for (int i = 0; i < 48; i++) {
-        uuid[pos++] = custom_a[i];
+    // Bits 52-63: custom_b (12 bits)
+    for (int i = 0; i < 12; i++) {
+        uuid[pos++] = custom_b[i];
+    }
+    
+    // Bits 64-65: var (2 bits)
+    for (int i = 0; i < 2; i++) {
+        uuid[pos++] = var[i];
+    }
+    
+    // Bits 66-127: custom_c (62 bits)
+    for (int i = 0; i < 62; i++) {
+        uuid[pos++] = custom_c[i];
     }
     
     return uuid;

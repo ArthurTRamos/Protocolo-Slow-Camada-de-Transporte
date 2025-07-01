@@ -21,7 +21,7 @@ public:
     void setCustomC(bitset<62> newCustom_c, bool random);
     void setVar(bitset<2> newVar, bool random);
     void setVer(bitset<4> newVer, bool random);
-    void setAllBy16Bytes(uint8_t sid[16]);
+    void setAllBy128Bits(bitset<128> sid_bits);
 
     bitset<128> getUUID();
 };
